@@ -8,7 +8,6 @@ https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
 Students *MAY NOT* view the above tutorial or use it as a reference in any way. 
 """
 
-
 from __future__ import unicode_literals, print_function, division
 
 import argparse
@@ -18,10 +17,11 @@ import time
 from io import open
 
 import matplotlib
-#if you are running on the gradx/ugradx/ another cluster, 
-#you will need the following line
-#if you run on a local machine, you can comment it out
-matplotlib.use('agg') 
+
+# if you are running on the gradx/ugradx/ another cluster,
+# you will need the following line
+# if you run on a local machine, you can comment it out
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import torch
@@ -29,13 +29,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from nltk.translate.bleu_score import corpus_bleu
 from torch import optim
-
+import math
+from torch.autograd import Variable
+import numpy as np
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s %(message)s')
 
 # we are forcing the use of cpu, if you have access to a gpu, you can set the flag to "cuda"
-# make sure you are very careful if you are using a gpu on a shared cluster/grid, 
+# make sure you are very careful if you are using a gpu on a shared cluster/grid,
 # it can be very easy to confict with other people's jobs.
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -51,6 +53,7 @@ MAX_LENGTH = 15
 class Vocab:
     """ This class handles the mapping between the words and their indicies
     """
+
     def __init__(self, lang_code):
         self.lang_code = lang_code
         self.word2index = {}
@@ -80,7 +83,7 @@ def split_lines(input_file):
     first src sentence|||first tgt sentence
     second src sentence|||second tgt sentence
     into a list of things like
-    [("first src sentence", "first tgt sentence"), 
+    [("first src sentence", "first tgt sentence"),
      ("second src sentence", "second tgt sentence")]
     """
     logging.info("Reading lines of %s...", input_file)
@@ -107,6 +110,7 @@ def make_vocabs(src_lang_code, tgt_lang_code, train_file):
     logging.info('%s (tgt) vocab size: %s', tgt_vocab.lang_code, tgt_vocab.n_words)
 
     return src_vocab, tgt_vocab
+
 
 ######################################################################
 
@@ -135,18 +139,60 @@ def tensors_from_pair(src_vocab, tgt_vocab, pair):
 ######################################################################
 
 
-# class LSTM(nn.module):
-#
-#     def __init__(self, input_size, hidden_size):
-#         super(LSTM, self).__init__()
-#         self.hidden_size = hidden_size
-#
+class LSTM(nn.Module):
 
+    def __init__(self, input_size, hidden_size, dropout=0.6):
+        super(LSTM, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+
+        self.w_i = torch.nn.Parameter(torch.Tensor(hidden_size, input_size))
+        self.w_f = torch.nn.Parameter(torch.Tensor(hidden_size, input_size))
+        self.w_o = torch.nn.Parameter(torch.Tensor(hidden_size, input_size))
+        self.w_c = torch.nn.Parameter(torch.Tensor(hidden_size, input_size))
+
+        self.u_i = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+        self.u_f = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+        self.u_o = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+        self.u_c = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+
+        self.bias = torch.nn.Parameter(torch.Tensor(hidden_size).fill_(0))
+
+        self.sigmoid = nn.Sigmoid()
+        self.tanh = nn.Tanh()
+
+        self.dropout = dropout
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1.0 / math.sqrt(self.hidden_size)
+        for weight in self.parameters():
+            weight.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hidden, pre_cell):
+
+        input = input.view(input.size()[0], -1)
+        hidden = hidden.view(hidden.size()[0], -1)
+        pre_cell = pre_cell.view(pre_cell.size()[0], -1)
+
+        f_t = self.sigmoid(torch.mm(input, self.w_f) + torch.mm(hidden, self.u_f) + self.bias)
+        i_t = self.sigmoid(torch.mm(input, self.w_i) + torch.mm(hidden, self.u_i) + self.bias)
+        o_t = self.sigmoid(torch.mm(input, self.w_o) + torch.mm(hidden, self.u_o) + self.bias)
+
+        c_t = self.tanh(torch.mm(input, self.w_c) + torch.mm(hidden, self.u_c) + self.bias)
+        c_t = torch.mul(pre_cell, f_t) + torch.mul(i_t, c_t)
+        h_t = torch.mul(o_t, self.tanh(c_t))
+        h_t = h_t.view(h_t.size()[0], 1, -1)
+        c_t = c_t.view(c_t.size()[0], 1, -1)
+        F.dropout(h_t, p=self.dropout, inplace=True)
+        return h_t, c_t
 
 
 class EncoderRNN(nn.Module):
     """the class for the enoder RNN
     """
+
     def __init__(self, input_size, hidden_size):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
@@ -159,8 +205,18 @@ class EncoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         self.hidden_size = hidden_size
 
+        # print('i',input_size, hidden_size)
+        # i 1381 256
+
         self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
+        # print(self.embedding)
+        # Embedding(1381, 256)
+        # self.gru = nn.GRU(hidden_size, hidden_size)
+        self.lstm = LSTM(hidden_size, hidden_size)
+        # print(self.gru)
+        # GRU(256, 256)
+        # input_size, hidden_layers, num_layers
+
         # embed_size = 16
         # self.input_size = input_size
         # self.hidden_size = hidden_size
@@ -169,21 +225,45 @@ class EncoderRNN(nn.Module):
         # self.gru = nn.GRU(embed_size, hidden_size, 2,
         #                   dropout=0.5, bidirectional=True)
 
-        #return output, hidden
+        # return output, hidden
 
     def initHidden(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
 
-
-    def forward(self, input, hidden):
+    def forward(self, input_batch, hidden):
         """runs the forward pass of the encoder
         returns the output and the hidden state
         """
         "*** YOUR CODE HERE ***"
+        outputs = torch.zeros(MAX_LENGTH, self.hidden_size, device=device)
+        input_length = input_batch.size(0)
+        batch_size = input_batch.size()[1]
+
+        pre_cell = torch.zeros(1, 1, self.hidden_size, device=device)
+        for ei in range(input_length):
+            input = input_batch[ei]
+            embedded = self.embedding(input).view(1, 1, -1)
+            output = embedded
+            hidden, pre_cell = self.lstm(output[0], hidden, pre_cell)
+            #output, (hidden, pre_cell) = self.lstm(output, (hidden, pre_cell))#, pre_cell, batch_size)
+            outputs[ei] = hidden[0, 0]
+
+        # TODO: reverse order
+
+        return outputs, hidden
+
+        # print(input.shape, hidden.shape)
+        # (1,) (1, 1, 256)
+
         embedded = self.embedding(input).view(1, 1, -1)
+        # (1, 1, 256)
         output = embedded
-        output, hidden = self.gru(output, hidden)
+        # output, hidden = self.gru(output, hidden)
+        # (1, 1, 256)(1, 1, 256)
+        cn = torch.tensor(hidden, requires_grad=True)
+        output, (hidden, cn) = self.lstm(output, (hidden, cn))
         return output, hidden
+
         # embedded = self.embed(input)
         # print("-----", self.gru(embedded, hidden))
         # output, hidden = self.gru(embedded, hidden)
@@ -198,8 +278,9 @@ class EncoderRNN(nn.Module):
 
 
 class AttnDecoderRNN(nn.Module):
-    """the class for the decoder 
+    """the class for the decoder
     """
+
     def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=MAX_LENGTH):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
@@ -208,7 +289,7 @@ class AttnDecoderRNN(nn.Module):
         self.max_length = max_length
 
         self.dropout = nn.Dropout(self.dropout_p)
-        
+
         """Initilize your word embedding, decoder LSTM, and weights needed for your attention here
         """
         "*** YOUR CODE HERE ***"
@@ -223,11 +304,12 @@ class AttnDecoderRNN(nn.Module):
     def forward(self, input, hidden, encoder_outputs):
         """runs the forward pass of the decoder
         returns the log_softmax, hidden state, and attn_weights
-        
+
         Dropout (self.dropout) should be applied to the word embeddings.
         """
-        
+
         "*** YOUR CODE HERE ***"
+        # print("Decoder: ", input, hidden, input.shape, hidden.shape)
         embedded = self.embedding(input).view(1, 1, -1)
         embedded = self.dropout(embedded)
 
@@ -261,25 +343,26 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     decoder.train()
 
     "*** YOUR CODE HERE ***"
-    #encoder_hidden = encoder.initHidden()
+    # encoder_hidden = encoder.initHidden()
 
     optimizer.zero_grad()
-    #decoder.zero_grad()
+    # decoder.zero_grad()
 
     input_length = input_tensor.size(0)
     target_length = target_tensor.size(0)
 
-    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+    # encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
 
     loss = 0
 
-    for ei in range(input_length):
-        encoder_output, encoder_hidden = encoder(
-            input_tensor[ei], encoder_hidden)
-        encoder_outputs[ei] = encoder_output[0, 0]
+    encoder_outputs, encoder_hidden = encoder(input_tensor, encoder_hidden)
 
-    SOS_token = 0
-    decoder_input = torch.tensor([[SOS_token]], device=device)
+    # for ei in range(input_length):
+    #     encoder_output, encoder_hidden = encoder(
+    #         input_tensor[ei], encoder_hidden)
+    #     encoder_outputs[ei] = encoder_output[0, 0]
+
+    decoder_input = torch.tensor([[SOS_index]], device=device)
 
     decoder_hidden = encoder_hidden
 
@@ -310,12 +393,11 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     loss.backward()
 
     optimizer.step()
-    #decoder.step()
+    # decoder.step()
 
     return loss.item() / target_length
 
-    return loss.item() 
-
+    return loss.item()
 
 
 ######################################################################
@@ -334,12 +416,14 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
         input_length = input_tensor.size()[0]
         encoder_hidden = encoder.get_initial_hidden_state()
 
-        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+        # encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
 
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
-            encoder_outputs[ei] += encoder_output[0, 0]
+        # for ei in range(input_length):
+        #     encoder_output, encoder_hidden = encoder(input_tensor[ei],
+        #                                              encoder_hidden)
+        #     encoder_outputs[ei] += encoder_output[0, 0]
+
+        encoder_outputs, encoder_hidden = encoder(input_tensor, encoder_hidden)
 
         decoder_input = torch.tensor([[SOS_index]], device=device)
 
@@ -395,12 +479,12 @@ def translate_random_sentence(encoder, decoder, pairs, src_vocab, tgt_vocab, n=1
 ######################################################################
 
 def show_attention(input_sentence, output_words, attentions):
-    """visualize the attention mechanism. And save it to a file. 
+    """visualize the attention mechanism. And save it to a file.
     Plots should look roughly like this: https://i.stack.imgur.com/PhtQi.png
     You plots should include axis labels and a legend.
     you may want to use matplotlib.
     """
-    
+
     "*** YOUR CODE HERE ***"
     # Set up figure with colorbar
     fig = plt.figure()
@@ -474,7 +558,7 @@ def main():
     # process the training, dev, test files
 
     # Create vocab from training data, or load if checkpointed
-    # also set iteration 
+    # also set iteration
     if args.load_checkpoint is not None:
         state = torch.load(args.load_checkpoint[0])
         iter_num = state['iter_num']
@@ -521,7 +605,7 @@ def main():
         loss = train(input_tensor, target_tensor, encoder,
                      decoder, optimizer, criterion)
         print_loss_total += loss
-        #print(loss)
+        # print(loss)
 
         if iter_num % args.checkpoint_every == 0:
             state = {'iter_num': iter_num,
