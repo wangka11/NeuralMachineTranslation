@@ -316,15 +316,27 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     decoder_hidden = encoder_hidden
 
-    for i in range(target_length):
-        decoder_output, decoder_hidden, decoder_attention = decoder(decoder_input, decoder_hidden, encoder_outputs)
-        topv, topi = decoder_output.topk(1)
+    teacher_forcing_ratio = 0.5
 
-        decoder_input = topi.squeeze().detach()
+    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
 
-        loss += criterion(decoder_output, target_tensor[i])
-        if decoder_input.item() == EOS_token:
-            break
+    if use_teacher_forcing:
+        for di in range(target_length):
+            decoder_output, decoder_hidden, decoder_attention = decoder(
+                decoder_input, decoder_hidden, encoder_outputs)
+            loss += criterion(decoder_output, target_tensor[di])
+            decoder_input = target_tensor[di]
+
+    else:
+        for di in range(target_length):
+            decoder_output, decoder_hidden, decoder_attention = decoder(
+                decoder_input, decoder_hidden, encoder_outputs)
+            topv, topi = decoder_output.topk(1)
+            decoder_input = topi.squeeze().detach()
+
+            loss += criterion(decoder_output, target_tensor[di])
+            if decoder_input.item() == EOS_token:
+                break
 
     loss.backward()
 
