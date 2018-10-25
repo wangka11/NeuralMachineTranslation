@@ -239,19 +239,13 @@ class EncoderRNN(nn.Module):
         input_length = input_batch.size(0)
 
         pre_cell = self.initHidden()
-        outs = {}
         for ei in range(input_length):
             input = input_batch[ei]
             embedded = self.embedding(input).view(1, 1, -1)
             output = embedded
             hidden, pre_cell = self.lstm(output[0], hidden, pre_cell)
-            #output, (hidden, pre_cell) = self.lstm(output, (hidden, pre_cell))#, pre_cell, batch_size)
-            #outputs[0][ei] = hidden[0, 0]
-            #outs[ei] = hidden[0, 0]
             outputs[ei][:self.hidden_size] = hidden[0, 0]
 
-
-        # TODO: reverse order
         pre_cell = self.initHidden()
         hidden = self.initHidden()
         for ei in reversed(range(input_length)):
@@ -259,13 +253,8 @@ class EncoderRNN(nn.Module):
             embedded = self.embedding(input).view(1, 1, -1)
             output = embedded
             hidden, pre_cell = self.lstm(output[0], hidden, pre_cell)
-            # output, (hidden, pre_cell) = self.lstm(output, (hidden, pre_cell))#, pre_cell, batch_size)
-            #outputs[1][ei] = hidden[0, 0]
-            outputs[ei][self.hidden_size:] = hidden[0, 0]
 
-            #print(outs[ei].shape, hidden.shape)
-            #outs[ei] = torch.cat((outs[ei], hidden[0, 0]), 0)
-            #print(outs[ei].shape)
+            outputs[ei][self.hidden_size:] = hidden[0, 0]
 
         return outputs, hidden
 
@@ -281,14 +270,6 @@ class EncoderRNN(nn.Module):
         output, (hidden, cn) = self.lstm(output, (hidden, cn))
         return output, hidden
 
-        # embedded = self.embed(input)
-        # print("-----", self.gru(embedded, hidden))
-        # output, hidden = self.gru(embedded, hidden)
-        # # sum bidirectional outputs
-        # output = (output[:, :, :self.hidden_size] +
-        #            output[:, :, self.hidden_size:])
-        #
-        # return output, hidden
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -312,7 +293,7 @@ class AttnDecoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
-        self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.attn_combine = nn.Linear(self.hidden_size * 3, self.hidden_size)
         self.dropout = nn.Dropout(self.dropout_p)
 
         self.gru = nn.GRU(self.hidden_size, self.hidden_size)
@@ -333,20 +314,21 @@ class AttnDecoderRNN(nn.Module):
 
         attn_weights = F.softmax(
             self.attn(torch.cat((embedded[0], hidden[0]), 1)), dim=1)
-        print(encoder_outputs.unsqueeze(0).shape)
         attn_applied = torch.bmm(attn_weights.unsqueeze(0),
                                  encoder_outputs.unsqueeze(0))
 
         output = torch.cat((embedded[0], attn_applied[0]), 1)
+
         output = self.attn_combine(output).unsqueeze(0)
 
         output = F.relu(output)
 
         cn = torch.zeros(1, 1, self.hidden_size, device=device)
-        output, (hidden, cn) = self.lstm(output, (hidden, cn))
+        #output, (hidden, cn) = self.lstm(output, (hidden, cn))
         # output, hidden = self.gru(output, hidden)
-
-        output = F.log_softmax(self.out(output[0]), dim=1)
+        hidden, cn = self.lstm(output, hidden, cn)
+        #output = F.log_softmax(self.out(output[0]), dim=1)
+        output = F.log_softmax(self.out(hidden[0]), dim=1)
         return output, hidden, attn_weights
 
         return log_softmax, hidden, attn_weights
