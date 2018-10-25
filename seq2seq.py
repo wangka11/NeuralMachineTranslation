@@ -156,7 +156,11 @@ class LSTM(nn.Module):
         self.u_o = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
         self.u_c = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
 
-        self.bias = torch.nn.Parameter(torch.Tensor(hidden_size).fill_(0))
+        self.bias1 = torch.nn.Parameter(torch.Tensor(hidden_size).uniform_())
+        self.bias2 = torch.nn.Parameter(torch.Tensor(hidden_size).uniform_())
+        self.bias3 = torch.nn.Parameter(torch.Tensor(hidden_size).uniform_())
+        self.bias4 = torch.nn.Parameter(torch.Tensor(hidden_size).uniform_())
+
 
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
@@ -176,11 +180,11 @@ class LSTM(nn.Module):
         hidden = hidden.view(hidden.size()[0], -1)
         pre_cell = pre_cell.view(pre_cell.size()[0], -1)
 
-        f_t = self.sigmoid(torch.mm(input, self.w_f) + torch.mm(hidden, self.u_f) + self.bias)
-        i_t = self.sigmoid(torch.mm(input, self.w_i) + torch.mm(hidden, self.u_i) + self.bias)
-        o_t = self.sigmoid(torch.mm(input, self.w_o) + torch.mm(hidden, self.u_o) + self.bias)
+        f_t = self.sigmoid(torch.mm(input, self.w_f) + torch.mm(hidden, self.u_f) + self.bias1)
+        i_t = self.sigmoid(torch.mm(input, self.w_i) + torch.mm(hidden, self.u_i) + self.bias2)
+        o_t = self.sigmoid(torch.mm(input, self.w_o) + torch.mm(hidden, self.u_o) + self.bias3)
 
-        c_t = self.tanh(torch.mm(input, self.w_c) + torch.mm(hidden, self.u_c) + self.bias)
+        c_t = self.tanh(torch.mm(input, self.w_c) + torch.mm(hidden, self.u_c) + self.bias4)
         c_t = torch.mul(pre_cell, f_t) + torch.mul(i_t, c_t)
         h_t = torch.mul(o_t, self.tanh(c_t))
         h_t = h_t.view(h_t.size()[0], 1, -1)
@@ -222,7 +226,6 @@ class EncoderRNN(nn.Module):
             output = embedded
             hidden, pre_cell = self.lstm(output[0], hidden, pre_cell)
             outputs[ei][:self.hidden_size] = hidden[0, 0]
-
         pre_cell = self.get_initial_hidden_state()
         hidden = self.get_initial_hidden_state()
         for ei in reversed(range(input_length)):
@@ -232,7 +235,6 @@ class EncoderRNN(nn.Module):
             hidden, pre_cell = self.lstm(output[0], hidden, pre_cell)
 
             outputs[ei][self.hidden_size:] = hidden[0, 0]
-
         return outputs, hidden
 
     def get_initial_hidden_state(self):
@@ -243,7 +245,7 @@ class AttnDecoderRNN(nn.Module):
     """the class for the decoder
     """
 
-    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=MAX_LENGTH):
+    def __init__(self, hidden_size, output_size, dropout_p=0.7, max_length=MAX_LENGTH):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
